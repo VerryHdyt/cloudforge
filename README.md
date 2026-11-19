@@ -72,11 +72,12 @@ Edit `backend/.env`:
 ```env
 APP_ENV=development
 APP_PORT=8080
-DATABASE_URL=host=localhost user=cloudforge password=YOUR_PASSWORD dbname=cloudforge port=5433 sslmode=disable TimeZone=Asia/Jakarta
+DATABASE_URL=host=localhost user=cloudforge password=cloudforge_dev_password dbname=cloudforge port=5433 sslmode=disable TimeZone=Asia/Jakarta
+DOCKER_HOST=unix:///Users/verry/.docker/run/docker.sock
 JWT_SECRET=YOUR_RANDOM_SECRET
 ```
 
-Use a strong, unique JWT secret. Never commit your `.env` file.
+These database settings match the local Docker Compose service. Use a strong, unique JWT secret. Never commit your `.env` file.
 
 ### 3. Start PostgreSQL
 

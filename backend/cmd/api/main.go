@@ -1,8 +1,17 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
 
 	"github.com/VerryHdyt/cloudforge/backend/internal/database"
 	"github.com/VerryHdyt/cloudforge/backend/internal/handlers"
@@ -13,64 +22,76 @@ import (
 )
 
 func main() {
-	// Load environment variables
+	if err := run(); err != nil {
+		log.Printf("CloudForge API stopped with an error: %v", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	if err := godotenv.Load(); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("failed to load .env file: %w", err)
+		}
 		log.Println("Warning: .env file not found, using system environment variables")
 	}
 
-	// Connect to PostgreSQL
+	port, err := apiPort(os.Getenv("APP_PORT"))
+	if err != nil {
+		return err
+	}
+
 	db, err := database.Connect()
 	if err != nil {
-		log.Fatalf("Database connection failed: %v", err)
+		return fmt.Errorf("database connection failed: %w", err)
 	}
 
 	sqlDB, err := db.DB()
 	if err != nil {
-		log.Fatalf("Failed to get database connection: %v", err)
+		return fmt.Errorf("failed to get database connection: %w", err)
 	}
-	defer sqlDB.Close()
+	defer func() {
+		if err := sqlDB.Close(); err != nil {
+			log.Printf("Failed to close PostgreSQL connection: %v", err)
+		}
+	}()
 
 	log.Println("PostgreSQL connected successfully")
 
-	// Run database migrations
 	if err := database.Migrate(db); err != nil {
-		log.Fatalf("Database migration failed: %v", err)
+		return fmt.Errorf("database migration failed: %w", err)
 	}
 
 	log.Println("Database migrations completed successfully")
 
-	// Initialize Audit Service
 	auditService := &services.AuditService{
 		DB: db,
 	}
 
-	// Initialize Docker Service
 	dockerService, err := services.NewDockerService()
 	if err != nil {
-		log.Fatalf("Failed to connect to Docker Engine: %v", err)
+		return fmt.Errorf("failed to connect to Docker Engine: %w", err)
 	}
-	defer dockerService.Client.Close()
+	defer func() {
+		if err := dockerService.Client.Close(); err != nil {
+			log.Printf("Failed to close Docker client: %v", err)
+		}
+	}()
 
 	log.Println("Docker Engine connected successfully")
 
-	// Initialize Gin router
 	router := gin.Default()
 
-	// Disable trusted proxies
 	if err := router.SetTrustedProxies(nil); err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("failed to configure trusted proxies: %w", err)
 	}
 
-	// Health check
 	router.GET("/health", handlers.HealthCheck)
 
-	// API version 1
 	api := router.Group("/api/v1")
 	{
-		// Public routes
 		api.GET("/info", handlers.PlatformInfo)
 
-		// Authentication handler
 		authHandler := &handlers.AuthHandler{
 			DB:    db,
 			Audit: auditService,
@@ -79,32 +100,26 @@ func main() {
 		api.POST("/auth/register", authHandler.Register)
 		api.POST("/auth/login", authHandler.Login)
 
-		// User management handler
 		userHandler := &handlers.UserHandler{
 			DB:    db,
 			Audit: auditService,
 		}
 
-		// Audit handler
 		auditHandler := &handlers.AuditHandler{
 			DB: db,
 		}
 
-		// Docker handler
 		dockerHandler := &handlers.DockerHandler{
 			Docker: dockerService,
 			Audit:  auditService,
 		}
 
-		// Protected routes (JWT Authentication required)
 		protected := api.Group("")
 		protected.Use(middleware.AuthMiddleware(db))
 
-		// Admin-only routes (JWT + RBAC required)
 		admin := protected.Group("")
 		admin.Use(middleware.RequireRoles("admin"))
 		{
-			// User management
 			admin.POST("/users", userHandler.CreateUser)
 			admin.GET("/users", userHandler.GetUsers)
 			admin.GET("/users/:id", userHandler.GetUser)
@@ -124,15 +139,70 @@ func main() {
 		}
 	}
 
-	// Start server
-	port := os.Getenv("APP_PORT")
-	if port == "" {
-		port = "8080"
+	server := &http.Server{
+		Addr:              ":" + port,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	log.Printf("CloudForge API starting on :%s", port)
 
-	if err := router.Run(":" + port); err != nil {
-		log.Fatal(err)
+	serverErrors := make(chan error, 1)
+	go func() {
+		err := server.ListenAndServe()
+		if errors.Is(err, http.ErrServerClosed) {
+			serverErrors <- nil
+			return
+		}
+		serverErrors <- err
+	}()
+
+	select {
+	case err := <-serverErrors:
+		if err != nil {
+			return fmt.Errorf("API server failed: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		log.Println("Shutdown signal received; stopping API server")
 	}
+
+	shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	shutdownErr := server.Shutdown(shutdownContext)
+	if shutdownErr != nil {
+		if err := server.Close(); err != nil {
+			shutdownErr = errors.Join(shutdownErr, fmt.Errorf("failed to force close API server: %w", err))
+		}
+	}
+
+	if err := <-serverErrors; err != nil {
+		return fmt.Errorf("API server failed during shutdown: %w", err)
+	}
+	if shutdownErr != nil {
+		return fmt.Errorf("failed to gracefully shut down API server: %w", shutdownErr)
+	}
+
+	log.Println("API server stopped")
+	return nil
+}
+
+func apiPort(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "8080", nil
+	}
+
+	port, err := strconv.Atoi(value)
+	if err != nil || port < 1 || port > 65535 {
+		return "", fmt.Errorf("APP_PORT must be an integer between 1 and 65535")
+	}
+
+	return strconv.Itoa(port), nil
 }
