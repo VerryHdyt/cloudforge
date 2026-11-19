@@ -86,6 +86,8 @@ func run() error {
 		return fmt.Errorf("failed to configure trusted proxies: %w", err)
 	}
 
+	router.Use(corsMiddleware())
+
 	router.GET("/health", handlers.HealthCheck)
 
 	api := router.Group("/api/v1")
@@ -205,4 +207,29 @@ func apiPort(value string) (string, error) {
 	}
 
 	return strconv.Itoa(port), nil
+}
+
+func corsMiddleware() gin.HandlerFunc {
+	allowedOrigins := map[string]struct{}{
+		"http://localhost:5173": {},
+		"http://127.0.0.1:5173": {},
+	}
+
+	return func(c *gin.Context) {
+		origin := c.GetHeader("Origin")
+		if _, allowed := allowedOrigins[origin]; allowed {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Vary", "Origin")
+			c.Header("Access-Control-Allow-Credentials", "true")
+			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		}
+
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+
+		c.Next()
+	}
 }

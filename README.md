@@ -38,6 +38,10 @@ cloudforge/
 │   ├── .env.example
 │   ├── go.mod
 │   └── go.sum
+├── frontend/
+│   ├── src/
+│   ├── package.json
+│   └── vite.config.ts
 ├── deployments/docker/docker-compose.yml
 ├── .gitignore
 ├── LICENSE
@@ -96,6 +100,16 @@ make run
 ```
 
 The API runs at `http://localhost:8080`. Database migrations run automatically at startup.
+
+### 5. Start the frontend
+
+In a separate terminal:
+
+```bash
+make run-front
+```
+
+The React dashboard runs at `http://localhost:5173`.
 
 ## API Endpoints
 
