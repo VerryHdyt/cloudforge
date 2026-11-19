@@ -1,0 +1,18 @@
+# Environment variables
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# Dependencies
+node_modules/
+
+# Go build artifacts
+*.exe
+*.out
+*.test
+
+# OS files
+.DS_Store
