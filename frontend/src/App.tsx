@@ -67,32 +67,43 @@ function Login({ onLogin }: { onLogin: (user: User, token: string) => void }) {
 
   return (
     <main className="login-page">
-      <div className="login-brand">
-        <div className="brand-mark"><Boxes size={25} /></div>
-        <span>CloudForge</span>
-      </div>
-      <form className="login-card" onSubmit={submit}>
-        <div className="login-heading">
-          <div className="login-icon"><Container size={22} /></div>
-          <div>
-            <p>Infrastructure console</p>
-            <h1>Welcome back</h1>
-          </div>
+      <section className="login-context" aria-label="CloudForge system information">
+        <div className="login-brand">
+          <div className="brand-mark"><Boxes size={20} /></div>
+          <span>CloudForge</span>
         </div>
-        {error && <div className="error-banner">{error}</div>}
-        <label>
-          Email address
-          <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required placeholder="admin@cloudforge.local" />
-        </label>
-        <label>
-          Password
-          <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" required placeholder="Enter your password" />
-        </label>
-        <button className="primary-button" disabled={loading} type="submit">
-          {loading ? 'Signing in...' : 'Sign in'}
-        </button>
-      </form>
-      <p className="login-footer">CloudForge · Docker Infrastructure Management</p>
+        <div className="login-context-copy">
+          <p className="eyebrow">Infrastructure control</p>
+          <h1>Operate the stack.<br />Keep the record.</h1>
+          <div className="context-rule" />
+          <dl>
+            <div><dt>Runtime</dt><dd>Docker Engine</dd></div>
+            <div><dt>Control plane</dt><dd>CloudForge / v0.1</dd></div>
+          </dl>
+        </div>
+        <p className="login-footer">Authorized access only</p>
+      </section>
+      <section className="login-form-shell">
+        <form className="login-card" onSubmit={submit}>
+          <header className="login-heading">
+            <p>Sign in</p>
+            <h2>Access your workspace</h2>
+          </header>
+          {error && <div className="error-banner"><span>{error}</span></div>}
+          <label>
+            <span>Email address</span>
+            <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required placeholder="name@company.com" autoComplete="email" />
+          </label>
+          <label>
+            <span>Password</span>
+            <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" required placeholder="Enter password" autoComplete="current-password" />
+          </label>
+          <button className="primary-button" disabled={loading} type="submit">
+            <span>{loading ? 'Signing in...' : 'Continue'}</span>
+            <span aria-hidden="true">→</span>
+          </button>
+        </form>
+      </section>
     </main>
   )
 }
@@ -117,6 +128,11 @@ function AppShell({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [notice, setNotice] = useState('')
+  const [modal, setModal] = useState<'pull' | 'create' | null>(null)
+  const [modalImage, setModalImage] = useState('nginx:latest')
+  const [modalName, setModalName] = useState('')
+  const [modalEmail, setModalEmail] = useState('')
+  const [modalPassword, setModalPassword] = useState('')
 
   async function loadAll() {
     setLoading(true)
@@ -140,7 +156,10 @@ function AppShell({ user, onLogout }: { user: User; onLogout: () => void }) {
   }
 
   useEffect(() => {
-    void loadAll()
+    const timer = window.setTimeout(() => {
+      void loadAll()
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [])
 
   async function containerAction(id: string, action: 'start' | 'stop' | 'restart') {
@@ -166,12 +185,16 @@ function AppShell({ user, onLogout }: { user: User; onLogout: () => void }) {
   }
 
   async function pullImage() {
-    const image = window.prompt('Image reference', 'nginx:latest')
-    if (!image?.trim()) return
+    setModal('pull')
+  }
+
+  async function submitPullImage() {
+    if (!modalImage.trim()) return
     setLoading(true)
     try {
-      await api('/api/v1/images/pull', { method: 'POST', body: JSON.stringify({ image: image.trim() }) })
-      setNotice(`Pulled ${image.trim()}`)
+      await api('/api/v1/images/pull', { method: 'POST', body: JSON.stringify({ image: modalImage.trim() }) })
+      setNotice(`Pulled ${modalImage.trim()}`)
+      setModal(null)
       await loadAll()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to pull image')
@@ -180,15 +203,18 @@ function AppShell({ user, onLogout }: { user: User; onLogout: () => void }) {
   }
 
   async function createUser() {
-    const name = window.prompt('Full name')
-    if (!name?.trim()) return
-    const email = window.prompt('Email address')
-    if (!email?.trim()) return
-    const password = window.prompt('Password (minimum 8 characters)')
-    if (!password || password.length < 8) return
+    setModal('create')
+  }
+
+  async function submitCreateUser() {
+    if (!modalName.trim() || !modalEmail.trim() || modalPassword.length < 8) return
     try {
-      await api('/api/v1/users', { method: 'POST', body: JSON.stringify({ name: name.trim(), email: email.trim(), password }) })
+      await api('/api/v1/users', { method: 'POST', body: JSON.stringify({ name: modalName.trim(), email: modalEmail.trim(), password: modalPassword }) })
       setNotice('User created successfully')
+      setModal(null)
+      setModalName('')
+      setModalEmail('')
+      setModalPassword('')
       await loadAll()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create user')
@@ -263,6 +289,42 @@ function AppShell({ user, onLogout }: { user: User; onLogout: () => void }) {
           {error && <div className="error-banner">{error}<button onClick={() => setError('')}>Dismiss</button></div>}
           {notice && <div className="success-banner">{notice}<button onClick={() => setNotice('')}>Dismiss</button></div>}
           {loading && <div className="loading-banner">Loading infrastructure data...</div>}
+
+          {modal && (
+            <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setModal(null) }}>
+              <section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+                <header>
+                  <div>
+                    <p>{modal === 'pull' ? 'Docker registry' : 'Access management'}</p>
+                    <h2 id="modal-title">{modal === 'pull' ? 'Pull image' : 'Create user'}</h2>
+                  </div>
+                  <button className="icon-button" type="button" aria-label="Close" onClick={() => setModal(null)}>×</button>
+                </header>
+                {modal === 'pull' ? (
+                  <form onSubmit={(event) => { event.preventDefault(); void submitPullImage() }}>
+                    <label>
+                      <span>Image reference</span>
+                      <input value={modalImage} onChange={(event) => setModalImage(event.target.value)} placeholder="registry.example.com/project/image:tag" required />
+                    </label>
+                    <footer>
+                      <button type="button" className="secondary-button" onClick={() => setModal(null)}>Cancel</button>
+                      <button type="submit" className="primary-button compact-button"><Plus size={15} /> Pull image</button>
+                    </footer>
+                  </form>
+                ) : (
+                  <form onSubmit={(event) => { event.preventDefault(); void submitCreateUser() }}>
+                    <label><span>Full name</span><input value={modalName} onChange={(event) => setModalName(event.target.value)} required /></label>
+                    <label><span>Email address</span><input type="email" value={modalEmail} onChange={(event) => setModalEmail(event.target.value)} required /></label>
+                    <label><span>Password</span><input type="password" value={modalPassword} onChange={(event) => setModalPassword(event.target.value)} minLength={8} required /></label>
+                    <footer>
+                      <button type="button" className="secondary-button" onClick={() => setModal(null)}>Cancel</button>
+                      <button type="submit" className="primary-button compact-button"><Plus size={15} /> Create user</button>
+                    </footer>
+                  </form>
+                )}
+              </section>
+            </div>
+          )}
 
           {page === 'Overview' && (
             <>
